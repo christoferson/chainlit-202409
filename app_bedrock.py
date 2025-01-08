@@ -74,7 +74,9 @@ class BedrockModelStrategyFactory():
 
         provider = bedrock_model_id.split(".")[0]
 
-        if bedrock_model_id.startswith("anthropic.claude-3"): #"anthropic.claude-3-sonnet-20240229-v1:0": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html
+        if  bedrock_model_id.startswith("us.anthropic.claude-3-5-sonnet"):
+            model_strategy = AnthropicClaude3ConverseBedrockModelAsyncStrategy()
+        elif bedrock_model_id.startswith("anthropic.claude-3"): #"anthropic.claude-3-sonnet-20240229-v1:0": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html
             #model_strategy = AnthropicClaude3MsgBedrockModelStrategy()
             model_strategy = AnthropicClaude3MsgBedrockModelAsyncStrategy()
         elif provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
@@ -252,6 +254,103 @@ class AnthropicClaude3MsgBedrockModelAsyncStrategy(BedrockModelStrategy):
                 lag = invocation_metrics["firstByteLatency"]
                 stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag}"
                 await msg.stream_token(f"\n\n{stats}")
+
+class AnthropicClaude3ConverseBedrockModelAsyncStrategy(BedrockModelStrategy):
+    def create_request(self, inference_parameters: dict, prompt: str) -> dict:
+        # Create message content with text
+        content = [{"text": prompt}]
+
+        # Create message structure
+        messages = [{"role": "user", "content": content}]
+
+        # Create the request structure for converse_stream
+        request = {
+            "messages": messages,
+            "inferenceConfig": {
+                "temperature": inference_parameters.get("temperature"),
+                "topP": inference_parameters.get("top_p"),
+                "maxTokens": inference_parameters.get("max_tokens_to_sample")
+            }
+        }
+
+        # Add system message if provided
+        if inference_parameters.get("system_message"):
+            system_content = [{"text": inference_parameters.get("system_message")}]
+            request["system"] = system_content
+
+        print("Converse.Request", request)    
+        return request
+
+    def send_request(self, request: dict, bedrock_runtime, bedrock_model_id: str):
+        print("Converse.send_request.start")
+        response = bedrock_runtime.converse_stream(
+            modelId=bedrock_model_id,
+            **request
+        )
+        print("Converse.send_request.response:", response)
+        return response
+
+    async def process_response(self, response, msg: cl.Message):
+        print("Converse.process_response.start")
+        print("Converse.process_response.response:", response)
+        await self.process_response_stream(response, msg)
+
+    async def process_response_stream(self, stream, msg: cl.Message):
+        print("Converse.process_response_stream.start")
+        print("Converse.process_response_stream.stream:", stream)
+
+        try:
+            for event in stream.get("stream"):
+                print("Converse.process_response_stream.event:", event)
+
+                # Handle content block delta events (main response content)
+                if "contentBlockDelta" in event:
+                    print("Converse.process_response_stream.contentBlockDelta found")
+                    delta = event["contentBlockDelta"].get("delta", {})
+                    print("Converse.process_response_stream.delta:", delta)
+                    if "text" in delta:
+                        text = delta["text"]
+                        print("Converse.process_response_stream.text:", text)
+                        await msg.stream_token(text)
+
+                # Handle message stop events (includes final statistics)
+                elif "metadata" in event:
+                    print("Converse.process_response_stream.metadata found")
+                    metadata = event["metadata"]
+                    print("Converse.process_response_stream.metadata:", metadata)
+                    if "usage" in metadata:
+                        usage = metadata["usage"]
+                        stats = (f"\n\ntoken.in={usage.get('inputTokens', 0)} "
+                            f"token.out={usage.get('outputTokens', 0)} "
+                            f"total={usage.get('totalTokens', 0)}")
+                        if "metrics" in metadata and "latencyMs" in metadata["metrics"]:
+                            stats += f" latency={metadata['metrics']['latencyMs']}ms"
+                        await msg.stream_token(stats)
+
+                # Handle error events
+                elif any(err in event for err in ["internalServerException", 
+                                                "modelStreamErrorException",
+                                                "validationException",
+                                                "throttlingException",
+                                                "serviceUnavailableException"]):
+                    print("Converse.process_response_stream.error found")
+                    error_message = "An error occurred during streaming"
+                    for err_type in ["internalServerException", 
+                                "modelStreamErrorException",
+                                "validationException",
+                                "throttlingException",
+                                "serviceUnavailableException"]:
+                        if err_type in event:
+                            error_message = event[err_type].get("message", error_message)
+                            break
+                    print("Converse.process_response_stream.error_message:", error_message)
+                    await msg.stream_token(f"\n\nError: {error_message}")
+        except Exception as e:
+            print("Converse.process_response_stream.exception:", str(e))
+            print("Converse.process_response_stream.exception type:", type(e))
+            raise e
+
+
 
 class CohereBedrockModelStrategy(BedrockModelStrategy):
 
