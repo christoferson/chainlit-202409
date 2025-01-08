@@ -256,14 +256,98 @@ class AnthropicClaude3MsgBedrockModelAsyncStrategy(BedrockModelStrategy):
                 await msg.stream_token(f"\n\n{stats}")
 
 class AnthropicClaude3ConverseBedrockModelAsyncStrategy(BedrockModelStrategy):
-    def create_request(self, inference_parameters: dict, prompt: str) -> dict:
-        # Create message content with text
-        content = [{"text": prompt}]
 
-        # Create message structure
+    # Define class-level constants for error types
+    ERROR_TYPES = {
+        "internalServerException": "Internal Server Error",
+        "modelStreamErrorException": "Model Stream Error",
+        "validationException": "Validation Error",
+        "throttlingException": "Throttling Error",
+        "serviceUnavailableException": "Service Unavailable"
+    }
+
+    # Define stop reason descriptions
+    STOP_REASONS = {
+        "end_turn": "Model completed response",
+        "tool_use": "Model requested to use a tool",
+        "max_tokens": "Maximum token limit reached",
+        "stop_sequence": "Stop sequence encountered",
+        "guardrail_intervened": "Guardrail policy intervened",
+        "content_filtered": "Content was filtered"
+    }
+
+    async def _handle_error_event(self, event: dict, msg: cl.Message) -> None:
+        """
+        Handles error events from the stream.
+
+        Args:
+            event (dict): The error event from the stream
+            msg (cl.Message): Chainlit message object for streaming responses
+        """
+        for error_type, error_desc in self.ERROR_TYPES.items():
+            if error_type in event:
+                error_message = event[error_type].get("message", f"A {error_desc} occurred")
+                await msg.stream_token(f"\n\nError: {error_message}")
+                return
+
+        # If no specific error type is found, return a generic error
+        await msg.stream_token("\n\nError: An unknown error occurred during streaming")
+
+    async def _handle_message_stop(self, event: dict, msg: cl.Message) -> None:
+        """
+        Handles messageStop events from the stream.
+
+        Args:
+            event (dict): The messageStop event from the stream
+            msg (cl.Message): Chainlit message object for streaming responses
+        """
+        message_stop = event.get("messageStop", {})
+        stop_reason = message_stop.get("stopReason")
+        additional_fields = message_stop.get("additionalModelResponseFields")
+
+        # Add stop reason if available
+        if stop_reason:
+            reason_desc = self.STOP_REASONS.get(stop_reason, "Unknown stop reason")
+            await msg.stream_token(f"\n\nStop Reason: {stop_reason} ({reason_desc})")
+
+        # Add additional fields if available
+        if additional_fields:
+            await msg.stream_token(f"\nAdditional Info: {additional_fields}")
+
+    def create_request(self, inference_parameters: dict, prompt: str) -> dict:
+        """
+        Creates a request structure for the Bedrock Converse API.
+
+        Args:
+            inference_parameters (dict): Configuration parameters for the model inference
+                {
+                    "temperature": float,      # Controls randomness in the output
+                    "top_p": float,           # Nucleus sampling parameter
+                    "max_tokens_to_sample": int, # Maximum tokens to generate
+                    "system_message": str      # Optional system message
+                }
+            prompt (str): The input prompt text
+
+        Returns:
+            dict: The formatted request structure
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [{"text": str}]
+                        }
+                    ],
+                    "inferenceConfig": {
+                        "temperature": float,
+                        "topP": float,
+                        "maxTokens": int
+                    },
+                    "system": [{"text": str}]  # Optional
+                }
+        """
+        content = [{"text": prompt}]
         messages = [{"role": "user", "content": content}]
 
-        # Create the request structure for converse_stream
         request = {
             "messages": messages,
             "inferenceConfig": {
@@ -273,81 +357,97 @@ class AnthropicClaude3ConverseBedrockModelAsyncStrategy(BedrockModelStrategy):
             }
         }
 
-        # Add system message if provided
         if inference_parameters.get("system_message"):
             system_content = [{"text": inference_parameters.get("system_message")}]
             request["system"] = system_content
 
-        print("Converse.Request", request)    
         return request
 
     def send_request(self, request: dict, bedrock_runtime, bedrock_model_id: str):
-        print("Converse.send_request.start")
+        """
+        Sends the request to the Bedrock Converse API.
+
+        Returns:
+            dict: Response containing the event stream
+                {
+                    "ResponseMetadata": dict,
+                    "stream": EventStream
+                }
+        """
         response = bedrock_runtime.converse_stream(
             modelId=bedrock_model_id,
             **request
         )
-        print("Converse.send_request.response:", response)
         return response
 
     async def process_response(self, response, msg: cl.Message):
-        print("Converse.process_response.start")
-        print("Converse.process_response.response:", response)
+        """
+        Processes the initial response and delegates to stream processing.
+        """
         await self.process_response_stream(response, msg)
 
     async def process_response_stream(self, stream, msg: cl.Message):
-        print("Converse.process_response_stream.start")
-        print("Converse.process_response_stream.stream:", stream)
+        """
+        Processes the streaming response from the Bedrock Converse API.
 
+        Args:
+            stream (dict): The response stream containing events
+                {
+                    "stream": [
+                        {
+                            "messageStart": {"role": str},
+                            "contentBlockDelta": {
+                                "delta": {"text": str},
+                                "contentBlockIndex": int
+                            },
+                            "metadata": {
+                                "usage": {
+                                    "inputTokens": int,
+                                    "outputTokens": int,
+                                    "totalTokens": int
+                                },
+                                "metrics": {
+                                    "latencyMs": int
+                                }
+                            },
+                            "messageStop": {
+                                "stopReason": str
+                            }
+                        }
+                    ]
+                }
+            msg (cl.Message): Chainlit message object for streaming responses
+        """
         try:
             for event in stream.get("stream"):
-                print("Converse.process_response_stream.event:", event)
-
                 # Handle content block delta events (main response content)
                 if "contentBlockDelta" in event:
-                    print("Converse.process_response_stream.contentBlockDelta found")
                     delta = event["contentBlockDelta"].get("delta", {})
-                    print("Converse.process_response_stream.delta:", delta)
                     if "text" in delta:
-                        text = delta["text"]
-                        print("Converse.process_response_stream.text:", text)
-                        await msg.stream_token(text)
+                        await msg.stream_token(delta["text"])
 
+                # Handle message stop events
+                elif "messageStop" in event:
+                    await self._handle_message_stop(event, msg)
+                
                 # Handle message stop events (includes final statistics)
                 elif "metadata" in event:
-                    print("Converse.process_response_stream.metadata found")
                     metadata = event["metadata"]
-                    print("Converse.process_response_stream.metadata:", metadata)
                     if "usage" in metadata:
                         usage = metadata["usage"]
                         stats = (f"\n\ntoken.in={usage.get('inputTokens', 0)} "
-                            f"token.out={usage.get('outputTokens', 0)} "
-                            f"total={usage.get('totalTokens', 0)}")
+                               f"token.out={usage.get('outputTokens', 0)} "
+                               f"total={usage.get('totalTokens', 0)}")
                         if "metrics" in metadata and "latencyMs" in metadata["metrics"]:
                             stats += f" latency={metadata['metrics']['latencyMs']}ms"
                         await msg.stream_token(stats)
 
                 # Handle error events
-                elif any(err in event for err in ["internalServerException", 
-                                                "modelStreamErrorException",
-                                                "validationException",
-                                                "throttlingException",
-                                                "serviceUnavailableException"]):
-                    print("Converse.process_response_stream.error found")
-                    error_message = "An error occurred during streaming"
-                    for err_type in ["internalServerException", 
-                                "modelStreamErrorException",
-                                "validationException",
-                                "throttlingException",
-                                "serviceUnavailableException"]:
-                        if err_type in event:
-                            error_message = event[err_type].get("message", error_message)
-                            break
-                    print("Converse.process_response_stream.error_message:", error_message)
-                    await msg.stream_token(f"\n\nError: {error_message}")
+                elif any(err_type in event for err_type in self.ERROR_TYPES):
+                    await self._handle_error_event(event, msg)
+
         except Exception as e:
-            print("Converse.process_response_stream.exception:", str(e))
-            print("Converse.process_response_stream.exception type:", type(e))
+            # Log the exception details here if needed
             raise e
 
 
