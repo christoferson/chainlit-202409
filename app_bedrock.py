@@ -78,9 +78,11 @@ class BedrockModelStrategyFactory():
             model_strategy = AnthropicClaude3ConverseBedrockModelAsyncStrategy()
         elif bedrock_model_id.startswith("anthropic.claude-3"): #"anthropic.claude-3-sonnet-20240229-v1:0": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html
             #model_strategy = AnthropicClaude3MsgBedrockModelStrategy()
-            model_strategy = AnthropicClaude3MsgBedrockModelAsyncStrategy()
+            #model_strategy = AnthropicClaude3MsgBedrockModelAsyncStrategy()
+            model_strategy = AnthropicClaude3ConverseBedrockModelAsyncStrategy()
         elif provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
-            model_strategy = AnthropicBedrockModelStrategy()
+            #model_strategy = AnthropicBedrockModelStrategy()
+            model_strategy = AnthropicClaude3ConverseBedrockModelAsyncStrategy()
         elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
             model_strategy = AI21BedrockModelStrategy()
         elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
@@ -268,34 +270,28 @@ class AnthropicClaude3ConverseBedrockModelAsyncStrategy(BedrockModelStrategy):
 
     # Define stop reason descriptions
     STOP_REASONS = {
+        # Normal completion reasons (not displayed)
         "end_turn": "Model completed response",
         "tool_use": "Model requested to use a tool",
+        # Error conditions (displayed)
         "max_tokens": "Maximum token limit reached",
         "stop_sequence": "Stop sequence encountered",
         "guardrail_intervened": "Guardrail policy intervened",
         "content_filtered": "Content was filtered"
     }
 
-    async def _handle_error_event(self, event: dict, msg: cl.Message) -> None:
-        """
-        Handles error events from the stream.
-
-        Args:
-            event (dict): The error event from the stream
-            msg (cl.Message): Chainlit message object for streaming responses
-        """
-        for error_type, error_desc in self.ERROR_TYPES.items():
-            if error_type in event:
-                error_message = event[error_type].get("message", f"A {error_desc} occurred")
-                await msg.stream_token(f"\n\nError: {error_message}")
-                return
-
-        # If no specific error type is found, return a generic error
-        await msg.stream_token("\n\nError: An unknown error occurred during streaming")
+    # Define which stop reasons should be treated as errors
+    ERROR_STOP_REASONS = {
+        "max_tokens",
+        "stop_sequence",
+        "guardrail_intervened",
+        "content_filtered"
+    }
 
     async def _handle_message_stop(self, event: dict, msg: cl.Message) -> None:
         """
         Handles messageStop events from the stream.
+        Only outputs stop reason for error conditions.
 
         Args:
             event (dict): The messageStop event from the stream
@@ -305,14 +301,14 @@ class AnthropicClaude3ConverseBedrockModelAsyncStrategy(BedrockModelStrategy):
         stop_reason = message_stop.get("stopReason")
         additional_fields = message_stop.get("additionalModelResponseFields")
 
-        # Add stop reason if available
-        if stop_reason:
+        # Only output stop reason if it's an error condition
+        if stop_reason and stop_reason in self.ERROR_STOP_REASONS:
             reason_desc = self.STOP_REASONS.get(stop_reason, "Unknown stop reason")
             await msg.stream_token(f"\n\nStop Reason: {stop_reason} ({reason_desc})")
 
-        # Add additional fields if available
-        if additional_fields:
-            await msg.stream_token(f"\nAdditional Info: {additional_fields}")
+            # Add additional fields if available for error conditions
+            if additional_fields:
+                await msg.stream_token(f"\nAdditional Info: {additional_fields}")
 
     def create_request(self, inference_parameters: dict, prompt: str) -> dict:
         """
@@ -500,8 +496,7 @@ class TitanBedrockModelStrategy(BedrockModelStrategy):
         return request
 
     async def process_response_stream(self, stream, msg : cl.Message):
-        #print("titan")
-        #await msg.stream_token("Titan")
+
         if stream:
             for event in stream:
                 chunk = event.get("chunk")
@@ -561,7 +556,6 @@ class MetaBedrockModelStrategy(BedrockModelStrategy):
                                     lag = invocation_metrics["firstByteLatency"]
                                     stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag} finish_reason={finish_reason}"
                                     await msg.stream_token(f"\n\n{stats}")
-
 
 
 class AI21BedrockModelStrategy(BedrockModelStrategy):

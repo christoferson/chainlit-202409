@@ -31,8 +31,11 @@ async def on_chat_start():
         "cohere.command-text-v14",
         #"meta.llama2-13b-chat-v1",
         #"meta.llama2-70b-chat-v1",
-        "ai21.j2-mid"
+        "ai21.j2-mid",
+        "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+        
     ]
+    model_id_initial = model_ids.index("us.anthropic.claude-3-5-sonnet-20241022-v2:0")
     
     settings = await cl.ChatSettings(
         [
@@ -60,7 +63,7 @@ async def on_chat_start():
                 id = "Model",
                 label = "Foundation Model",
                 values = model_ids,
-                initial_index = model_ids.index("anthropic.claude-3-sonnet-20240229-v1:0"),
+                initial_index = model_id_initial,
             ),
             Slider(
                 id = "Temperature",
