@@ -8,7 +8,7 @@ from typing import List
 import profiles.app_profile_chat
 # import profiles.app_profile_data
 # import profiles.app_profile_file
-# import profiles.app_profile_search
+import profiles.app_profile_search
 # import profiles.app_profile_search_meta
 # import profiles.app_profile_chat_img
 
@@ -49,11 +49,11 @@ async def chat_profile():
         #     markdown_description="Retrieve and Generate with File",
         #     icon="https://picsum.photos/250",
         # ),
-        # cl.ChatProfile(
-        #     name="SEARCH",
-        #     markdown_description="Retrieve then Generate",
-        #     icon="https://picsum.photos/250",
-        # ),
+        cl.ChatProfile(
+            name="SEARCH",
+            markdown_description="Retrieve then Generate",
+            icon="https://picsum.photos/250",
+        ),
         # cl.ChatProfile(
         #     name="SEARCH_META",
         #     markdown_description="Retrieve then Generate (Meta)",
@@ -79,8 +79,8 @@ async def main():
     #    await profiles.app_profile_data.on_chat_start()
     # elif chat_profile == "FILE":
     #    await profiles.app_profile_file.on_chat_start()
-    # elif chat_profile == "SEARCH":
-    #    await profiles.app_profile_search.on_chat_start()
+    elif chat_profile == "SEARCH":
+       await profiles.app_profile_search.on_chat_start()
     # elif chat_profile == "SEARCH_META":
     #    await profiles.app_profile_search_meta.on_chat_start()
     # elif chat_profile == "CHAT_IMG":
@@ -99,8 +99,8 @@ async def setup_agent(settings):
     #    await profiles.app_profile_data.on_settings_update(settings)
     # elif chat_profile == "FILE":
     #    await profiles.app_profile_file.on_settings_update(settings)
-    # elif chat_profile == "SEARCH":
-    #    await profiles.app_profile_search.on_settings_update(settings)
+    elif chat_profile == "SEARCH":
+       await profiles.app_profile_search.on_settings_update(settings)
     # elif chat_profile == "SEARCH_META":
     #    await profiles.app_profile_search_meta.on_settings_update(settings)
     # elif chat_profile == "CHAT_IMG":
@@ -120,8 +120,8 @@ async def main(message: cl.Message):
     #    await profiles.app_profile_data.on_message(message)
     # elif chat_profile == "FILE":
     #    await profiles.app_profile_file.on_message(message)
-    # elif chat_profile == "SEARCH":
-    #    await profiles.app_profile_search.on_message(message)
+    elif chat_profile == "SEARCH":
+       await profiles.app_profile_search.on_message(message)
     # elif chat_profile == "SEARCH_META":
     #    await profiles.app_profile_search_meta.on_message(message)
     # elif chat_profile == "CHAT_IMG":
